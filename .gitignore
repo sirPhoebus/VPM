@@ -23,5 +23,5 @@ Thumbs.db
 # Environment
 .env
 .env.local
-src
+
 private.md

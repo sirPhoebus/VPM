@@ -1,602 +1,337 @@
-// VPM Image Recall Web App
-// Demonstrates associative memory recall using a Vector Phase Memory network
+import init, { Network } from './pkg/rusty_brain.js';
 
-import init, { Network, init_panic_hook } from './pkg/rusty_brain.js';
-
-// Constants
-const GRID_SIZE = 32;  // 32x32 = 1024 oscillators
-const NETWORK_SIZE = GRID_SIZE * GRID_SIZE;
-const MAX_HISTORY = 10;
-const DT = 0.05;
-
-// State
 let network = null;
-let wasmMemory = null;  // Cached WASM memory reference
-let targetPattern = null;  // Float64Array of phases [0, 2π]
-let currentPatternName = '';
-let isRunning = false;
-let currentMode = 'idle';
-let stepCount = 0;
 let animationId = null;
+let isRunning = true;
 
-// Pattern Library - stores all imprinted patterns
-const storedPatterns = [];
-
-// DOM Elements
-const networkCanvas = document.getElementById('networkCanvas');
+// UI Elements
+const canvas = document.getElementById('networkCanvas');
+const ctx = canvas.getContext('2d');
 const targetCanvas = document.getElementById('targetCanvas');
-const networkCtx = networkCanvas.getContext('2d');
 const targetCtx = targetCanvas.getContext('2d');
 
+const modeStatus = document.getElementById('modeStatus');
+const stepCountDisplay = document.getElementById('stepCount');
+const similarityDisplay = document.getElementById('similarity');
+const patternCountDisplay = document.getElementById('patternCount');
+
+// Controls
 const imprintBtn = document.getElementById('imprintBtn');
 const shakeBtn = document.getElementById('shakeBtn');
-
-const patternLibrary = document.getElementById('patternLibrary');
-const patternCount = document.getElementById('patternCount');
-const clearLibraryBtn = document.getElementById('clearLibraryBtn');
-
 const strengthSlider = document.getElementById('strengthSlider');
-const lrSlider = document.getElementById('lrSlider');
-const stepsSlider = document.getElementById('stepsSlider');
-
 const strengthValue = document.getElementById('strengthValue');
+const lrSlider = document.getElementById('lrSlider');
 const lrValue = document.getElementById('lrValue');
+const stepsSlider = document.getElementById('stepsSlider');
 const stepsValue = document.getElementById('stepsValue');
 
-const modeStatus = document.getElementById('modeStatus');
-const stepCountEl = document.getElementById('stepCount');
-const similarityEl = document.getElementById('similarity');
+// State
+let step = 0;
+let patternsStored = 0;
+let currentTargetPattern = null;
 
-const imageUpload = document.getElementById('imageUpload');
-const patternBtns = document.querySelectorAll('.pattern-btn');
+// Configuration
+const SIZE = 1000;
+const ROW_LEN = 50; // Visualizing as 50x20 grid? Or maybe just circle. 
+// Let's assume a grid for visualization if possible, or just a ring/cloud.
+// The Rust code doesn't specify topology, it's just a reservoir. 
+// Visualizing 1000 nodes: 32x32 = 1024. 
+const VIS_COLS = 32;
+const VIS_ROWS = 32;
+// Adjust Sizing: 320x320 canvas => 10px per cell.
 
-// Utility: Convert phase [0, 2π] to grayscale [0, 255]
-function phaseToGray(phase) {
-    const normalized = (Math.cos(phase) + 1) / 2;
-    return Math.floor(normalized * 255);
+async function start() {
+    await init();
+
+    // Initialize Network: 1000 nodes, history 5
+    network = new Network(VIS_COLS * VIS_ROWS, 5);
+
+    // Initial Pattern (Random)
+    network.shake();
+
+    setupUI();
+    animate();
 }
 
-// Utility: Convert grayscale [0, 255] to phase [0, 2π]
-function grayToPhase(gray) {
-    const normalized = gray / 255;
-    return normalized * 2 * Math.PI;
-}
-
-// Render network state to canvas
-function renderNetwork() {
-    if (!network) return;
-
-    const phasesPtr = network.phases_ptr();
-    const phases = new Float64Array(
-        wasmMemory.buffer,
-        phasesPtr,
-        NETWORK_SIZE
-    );
-
-    const imageData = networkCtx.createImageData(GRID_SIZE, GRID_SIZE);
-    const data = imageData.data;
-
-    for (let i = 0; i < NETWORK_SIZE; i++) {
-        const gray = phaseToGray(phases[i]);
-        const idx = i * 4;
-        data[idx] = gray;
-        data[idx + 1] = gray;
-        data[idx + 2] = gray;
-        data[idx + 3] = 255;
-    }
-
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = GRID_SIZE;
-    tempCanvas.height = GRID_SIZE;
-    const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.putImageData(imageData, 0, 0);
-
-    networkCtx.imageSmoothingEnabled = false;
-    networkCtx.drawImage(tempCanvas, 0, 0, networkCanvas.width, networkCanvas.height);
-}
-
-// Render target pattern to canvas
-function renderTarget() {
-    if (!targetPattern) return;
-
-    const imageData = targetCtx.createImageData(GRID_SIZE, GRID_SIZE);
-    const data = imageData.data;
-
-    for (let i = 0; i < NETWORK_SIZE; i++) {
-        const gray = phaseToGray(targetPattern[i]);
-        const idx = i * 4;
-        data[idx] = gray;
-        data[idx + 1] = gray;
-        data[idx + 2] = gray;
-        data[idx + 3] = 255;
-    }
-
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = GRID_SIZE;
-    tempCanvas.height = GRID_SIZE;
-    const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.putImageData(imageData, 0, 0);
-
-    targetCtx.imageSmoothingEnabled = false;
-    targetCtx.drawImage(tempCanvas, 0, 0, targetCanvas.width, targetCanvas.height);
-}
-
-// Create thumbnail canvas for a pattern
-function createPatternThumbnail(pattern) {
-    const canvas = document.createElement('canvas');
-    canvas.width = GRID_SIZE;
-    canvas.height = GRID_SIZE;
-    const ctx = canvas.getContext('2d');
-
-    const imageData = ctx.createImageData(GRID_SIZE, GRID_SIZE);
-    const data = imageData.data;
-
-    for (let i = 0; i < NETWORK_SIZE; i++) {
-        const gray = phaseToGray(pattern[i]);
-        const idx = i * 4;
-        data[idx] = gray;
-        data[idx + 1] = gray;
-        data[idx + 2] = gray;
-        data[idx + 3] = 255;
-    }
-
-    ctx.putImageData(imageData, 0, 0);
-    return canvas;
-}
-
-// Calculate similarity between network state and a pattern
-function calculateSimilarity(pattern = targetPattern) {
-    if (!network || !pattern) return 0;
-
-    const phasesPtr = network.phases_ptr();
-    const phases = new Float64Array(
-        wasmMemory.buffer,
-        phasesPtr,
-        NETWORK_SIZE
-    );
-
-    let totalAlignment = 0;
-    for (let i = 0; i < NETWORK_SIZE; i++) {
-        const diff = phases[i] - pattern[i];
-        totalAlignment += Math.cos(diff);
-    }
-
-    return (totalAlignment / NETWORK_SIZE + 1) / 2;
-}
-
-// Update UI status
-function updateStatus() {
-    modeStatus.textContent = currentMode.charAt(0).toUpperCase() + currentMode.slice(1);
-    stepCountEl.textContent = stepCount;
-
-    const sim = calculateSimilarity();
-    similarityEl.textContent = (sim * 100).toFixed(1) + '%';
-}
-
-// Render the pattern library UI
-function renderPatternLibrary() {
-    patternCount.textContent = `(${storedPatterns.length})`;
-    clearLibraryBtn.style.display = storedPatterns.length > 0 ? 'block' : 'none';
-
-    if (storedPatterns.length === 0) {
-        patternLibrary.innerHTML = '<p class="empty-library">No patterns stored yet. Select a pattern and click "Store Pattern".</p>';
-        return;
-    }
-
-    patternLibrary.innerHTML = '';
-
-    storedPatterns.forEach((stored, idx) => {
-        const item = document.createElement('div');
-        item.className = 'stored-pattern';
-
-        const thumbnail = createPatternThumbnail(stored.pattern);
-
-        const name = document.createElement('span');
-        name.className = 'pattern-name';
-        name.textContent = stored.name;
-
-        const recallBtn = document.createElement('button');
-        recallBtn.className = 'recall-btn';
-        recallBtn.textContent = '🔮 Recall';
-        recallBtn.disabled = isRunning;
-        recallBtn.onclick = () => recallPattern(idx);
-
-        item.appendChild(thumbnail);
-        item.appendChild(name);
-        item.appendChild(recallBtn);
-        patternLibrary.appendChild(item);
+function setupUI() {
+    // Pattern Selection
+    document.querySelectorAll('.pattern-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const type = e.target.dataset.pattern;
+            generatePattern(type);
+            imprintBtn.disabled = false;
+        });
     });
-}
 
-// Generate pattern functions
-function generateCheckerboard() {
-    const pattern = new Float64Array(NETWORK_SIZE);
-    for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-            const idx = y * GRID_SIZE + x;
-            const isWhite = (Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0;
-            pattern[idx] = isWhite ? 0 : Math.PI;
-        }
-    }
-    return pattern;
-}
+    // Actions
+    imprintBtn.addEventListener('click', () => {
+        if (!currentTargetPattern) return;
 
-function generateDiagonal() {
-    const pattern = new Float64Array(NETWORK_SIZE);
-    for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-            const idx = y * GRID_SIZE + x;
-            const stripe = ((x + y) % 8) < 4;
-            pattern[idx] = stripe ? 0 : Math.PI;
-        }
-    }
-    return pattern;
-}
+        const strength = parseFloat(strengthSlider.value);
+        // Call the new ONE-SHOT imprint method
+        network.imprint(strength);
 
-function generateCircle() {
-    const pattern = new Float64Array(NETWORK_SIZE);
-    const cx = GRID_SIZE / 2;
-    const cy = GRID_SIZE / 2;
-    const radius = GRID_SIZE / 3;
+        patternsStored++;
+        patternCountDisplay.innerText = `(${patternsStored})`;
+        updateStatus("Pattern Imprinted!");
 
-    for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-            const idx = y * GRID_SIZE + x;
-            const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
-            pattern[idx] = dist < radius ? 0 : Math.PI;
-        }
-    }
-    return pattern;
-}
+        // Visual feedback
+        imprintBtn.innerText = "Stored!";
+        setTimeout(() => imprintBtn.innerText = "Store Pattern", 1000);
 
-function generateCross() {
-    const pattern = new Float64Array(NETWORK_SIZE);
-    const thickness = 4;
-    const cx = GRID_SIZE / 2;
-    const cy = GRID_SIZE / 2;
+        addStoredPatternToLibrary(currentTargetPattern);
+    });
 
-    for (let y = 0; y < GRID_SIZE; y++) {
-        for (let x = 0; x < GRID_SIZE; x++) {
-            const idx = y * GRID_SIZE + x;
-            const inHoriz = Math.abs(y - cy) < thickness;
-            const inVert = Math.abs(x - cx) < thickness;
-            pattern[idx] = (inHoriz || inVert) ? 0 : Math.PI;
-        }
-    }
-    return pattern;
-}
+    shakeBtn.addEventListener('click', () => {
+        network.shake();
+        updateStatus("Chaos Shake!");
+    });
 
-function generateLetterA() {
-    const pattern = new Float64Array(NETWORK_SIZE);
-    pattern.fill(Math.PI);
+    // Sliders
+    strengthSlider.addEventListener('input', (e) => strengthValue.innerText = e.target.value);
+    lrSlider.addEventListener('input', (e) => lrValue.innerText = e.target.value);
+    stepsSlider.addEventListener('input', (e) => stepsValue.innerText = e.target.value);
 
-    const template = [
-        "    ####    ",
-        "   ######   ",
-        "  ###  ###  ",
-        " ###    ### ",
-        " ###    ### ",
-        "############",
-        "############",
-        "###      ###",
-        "###      ###",
-        "###      ###",
-    ];
+    // Image Upload
+    const imageUpload = document.getElementById('imageUpload');
+    imageUpload.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
 
-    const startY = Math.floor((GRID_SIZE - template.length * 3) / 2);
-    const startX = Math.floor((GRID_SIZE - template[0].length * 2.5) / 2);
-
-    for (let ty = 0; ty < template.length; ty++) {
-        for (let tx = 0; tx < template[ty].length; tx++) {
-            if (template[ty][tx] === '#') {
-                for (let dy = 0; dy < 3; dy++) {
-                    for (let dx = 0; dx < 2; dx++) {
-                        const y = startY + ty * 3 + dy;
-                        const x = startX + tx * 2 + dx;
-                        if (x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
-                            const idx = y * GRID_SIZE + x;
-                            pattern[idx] = 0;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return pattern;
-}
-
-// Load image from file
-function loadImageFile(file) {
-    return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = (event) => {
             const img = new Image();
             img.onload = () => {
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = GRID_SIZE;
-                tempCanvas.height = GRID_SIZE;
-                const ctx = tempCanvas.getContext('2d');
+                // Resize to grid size (32x32)
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = VIS_COLS;
+                offCanvas.height = VIS_ROWS;
+                const offCtx = offCanvas.getContext('2d');
+                offCtx.drawImage(img, 0, 0, VIS_COLS, VIS_ROWS);
 
-                ctx.drawImage(img, 0, 0, GRID_SIZE, GRID_SIZE);
+                // Process pixels
+                const imageData = offCtx.getImageData(0, 0, VIS_COLS, VIS_ROWS);
+                const pixels = new Float64Array(VIS_COLS * VIS_ROWS);
 
-                const imageData = ctx.getImageData(0, 0, GRID_SIZE, GRID_SIZE);
-                const data = imageData.data;
+                for (let i = 0; i < pixels.length; i++) {
+                    // Simple grayscale: (R+G+B)/3
+                    const r = imageData.data[i * 4 + 0];
+                    const g = imageData.data[i * 4 + 1];
+                    const b = imageData.data[i * 4 + 2];
+                    const brightness = (r + g + b) / 3.0 / 255.0;
 
-                const pattern = new Float64Array(NETWORK_SIZE);
-                for (let i = 0; i < NETWORK_SIZE; i++) {
-                    const idx = i * 4;
-                    const gray = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-                    pattern[i] = grayToPhase(gray);
+                    // Map brightness to phase:
+                    // 1.0 (White) -> 0 (Phase 0)
+                    // 0.0 (Black) -> PI (Phase PI)
+                    // using Cosine mapping logic: Cos(0)=1 (White), Cos(PI)=-1 (Black)
+                    // So we want phase = arccos(2*brightness - 1) ?
+                    // Actually simpler: 
+                    // Brightness 1 -> Phase 0
+                    // Brightness 0 -> Phase PI
+                    // Linear map: phase = (1.0 - brightness) * Math.PI;
+
+                    // Let's check our draw logic:
+                    // intensity = cos(phase) * 127 + 128
+                    // if phase=0, intensity=255 (White)
+                    // if phase=PI, intensity=0 (Black)
+                    // So yes, phase 0 is White.
+
+                    pixels[i] = (1.0 - brightness) * Math.PI;
                 }
 
-                resolve(pattern);
+                currentTargetPattern = pixels;
+                drawPattern(targetCtx, pixels);
+
+                // Set Network State
+                for (let i = 0; i < pixels.length; i++) {
+                    network.set_phase(i, pixels[i]);
+                }
+                network.clear_drives();
+
+                imprintBtn.disabled = false;
+                shakeBtn.disabled = false;
+                updateStatus(`Uploaded Image Processed`);
             };
-            img.onerror = reject;
-            img.src = e.target.result;
+            img.src = event.target.result;
         };
-        reader.onerror = reject;
         reader.readAsDataURL(file);
     });
 }
 
-// Store pattern in library (instant save, no learning needed since we use sustained cueing for recall)
-async function storePattern() {
-    if (!network || !targetPattern || isRunning) return;
+function addStoredPatternToLibrary(patternData) {
+    const library = document.getElementById('patternLibrary');
 
-    // Check if this pattern is already stored
-    const alreadyStored = storedPatterns.some(p => p.name === currentPatternName);
-    if (alreadyStored) {
-        console.log('Pattern already stored, skipping');
-        return;
+    // Remove empty message if present
+    const emptyMsg = library.querySelector('.empty-library');
+    if (emptyMsg) {
+        emptyMsg.remove();
     }
 
-    isRunning = true;
-    currentMode = 'storing';
-    stepCount = 0;
-    imprintBtn.classList.add('running');
-    updateButtons();
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'inline-block';
+    wrapper.style.margin = '5px';
+    wrapper.style.textAlign = 'center';
+    wrapper.style.cursor = 'pointer';
+    wrapper.title = "Click to Cue (Recall) this pattern";
 
-    // Brief animation to show the pattern being "saved"
-    const strength = parseFloat(strengthSlider.value);
-
-    // Drive network toward pattern briefly for visual feedback
-    for (let i = 0; i < NETWORK_SIZE; i++) {
-        network.drive_node(i, targetPattern[i], strength);
-    }
-
-    // Quick animation
-    const animationSteps = 50;
-    const stepsPerFrame = 5;
-
-    function step() {
-        if (stepCount >= animationSteps) {
-            network.clear_drives();
-
-            // Add to stored patterns
-            storedPatterns.push({
-                name: currentPatternName || `Pattern ${storedPatterns.length + 1}`,
-                pattern: new Float64Array(targetPattern)
-            });
-
-            renderPatternLibrary();
-
-            isRunning = false;
-            currentMode = 'ready';
-            imprintBtn.classList.remove('running');
-            updateButtons();
-            updateStatus();
-            console.log(`Stored "${currentPatternName}" (total: ${storedPatterns.length} patterns)`);
-            return;
-        }
-
-        for (let i = 0; i < stepsPerFrame && stepCount < animationSteps; i++) {
-            network.step(DT, 0);
-            stepCount++;
-        }
-
-        renderNetwork();
-        updateStatus();
-        animationId = requestAnimationFrame(step);
-    }
-
-    step();
-}
-
-// Shake/randomize network
-function shakeNetwork() {
-    if (!network || isRunning) return;
-
-    network.shake();
-    stepCount = 0;
-    currentMode = 'chaos';
-    renderNetwork();
-    updateStatus();
-}
-
-// Recall pattern using SUSTAINED cueing
-// This drives the network toward the stored pattern actively, ensuring reliable recall
-async function recallPattern(patternIdx) {
-    if (!network || isRunning) return;
-
-    const stored = storedPatterns[patternIdx];
-    if (!stored) return;
-
-    // Set target to the pattern we're recalling
-    targetPattern = stored.pattern;
-    currentPatternName = stored.name;
-    renderTarget();
-
-    isRunning = true;
-    currentMode = 'recalling';
-    stepCount = 0;
-    updateButtons();
-
-    // SUSTAINED CUEING: Drive ALL nodes toward the target pattern
-    // This ensures reliable recall regardless of interference from other patterns
-    const driveStrength = 5.0;
-
-    // Apply sustained drive to all nodes
-    for (let i = 0; i < NETWORK_SIZE; i++) {
-        network.drive_node(i, stored.pattern[i], driveStrength);
-    }
-
-    network.set_mode(0);  // Inference mode (no learning)
-
-    // Animate the recall process
-    const maxSteps = 200;
-    const stepsPerFrame = 3;
-
-    function step() {
-        const sim = calculateSimilarity(stored.pattern);
-
-        // Stop when highly converged or max steps reached
-        if (sim > 0.95 || stepCount >= maxSteps) {
-            network.clear_drives();
-            isRunning = false;
-            currentMode = 'recalled';
-            updateButtons();
-            updateStatus();
-            renderNetwork();
-            return;
-        }
-
-        for (let i = 0; i < stepsPerFrame; i++) {
-            network.step(DT, 0);
-            stepCount++;
-        }
-
-        renderNetwork();
-        updateStatus();
-        animationId = requestAnimationFrame(step);
-    }
-
-    step();
-}
-
-// Clear all stored patterns
-function clearLibrary() {
-    if (isRunning) return;
-
-    storedPatterns.length = 0;
-    network.reset_connectivity();
-    renderPatternLibrary();
-    currentMode = 'idle';
-    updateStatus();
-}
-
-// Update button states
-function updateButtons() {
-    const hasPattern = targetPattern !== null;
-    const hasNetwork = network !== null;
-
-    imprintBtn.disabled = !hasPattern || !hasNetwork || isRunning;
-    shakeBtn.disabled = !hasNetwork || isRunning;
-
-    // Update recall buttons in library
-    document.querySelectorAll('.recall-btn').forEach(btn => {
-        btn.disabled = isRunning;
-    });
-}
-
-// Set pattern
-function setPattern(pattern, name) {
-    targetPattern = pattern;
-    currentPatternName = name;
-    renderTarget();
-    updateButtons();
-
-    // Show pattern on network canvas
-    if (network) {
-        for (let i = 0; i < NETWORK_SIZE; i++) {
-            network.drive_node(i, pattern[i], 10);
-        }
-        for (let i = 0; i < 20; i++) {
-            network.step(DT, 0);
+    wrapper.onclick = () => {
+        // Cue the network with this pattern
+        for (let i = 0; i < patternData.length; i++) {
+            network.set_phase(i, patternData[i]);
         }
         network.clear_drives();
-        renderNetwork();
-    }
+        updateStatus("Cued Stored Pattern");
+    };
 
-    updateStatus();
-}
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = 64;
+    thumbCanvas.height = 64;
+    thumbCanvas.className = 'pattern-thumbnail';
+    thumbCanvas.style.border = '1px solid #444';
+    thumbCanvas.style.borderRadius = '4px';
 
-// Event Listeners
-patternBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-        patternBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
+    const thumbCtx = thumbCanvas.getContext('2d');
 
-        const patternType = btn.dataset.pattern;
-        let pattern;
-        let name;
+    // Re-use logic from drawPattern but scaled
+    const imgData = thumbCtx.createImageData(64, 64);
+    const scale = 64 / VIS_COLS; // 2
 
-        switch (patternType) {
-            case 'checkerboard': pattern = generateCheckerboard(); name = 'Checkerboard'; break;
-            case 'diagonal': pattern = generateDiagonal(); name = 'Diagonal'; break;
-            case 'circle': pattern = generateCircle(); name = 'Circle'; break;
-            case 'cross': pattern = generateCross(); name = 'Cross'; break;
-            case 'letter-a': pattern = generateLetterA(); name = 'Letter A'; break;
-        }
+    for (let y = 0; y < 64; y++) {
+        for (let x = 0; x < 64; x++) {
+            const py = Math.floor(y / scale);
+            const px = Math.floor(x / scale);
+            const idx = py * VIS_COLS + px;
 
-        if (pattern) setPattern(pattern, name);
-    });
-});
+            let phase = patternData[idx];
+            if (phase < 0) phase += 2 * Math.PI;
 
-imageUpload.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (file) {
-        try {
-            const pattern = await loadImageFile(file);
-            patternBtns.forEach(b => b.classList.remove('active'));
-            setPattern(pattern, file.name.split('.')[0]);
-        } catch (err) {
-            console.error('Failed to load image:', err);
+            const intensity = Math.cos(phase) * 127 + 128;
+
+            const cellIdx = (y * 64 + x) * 4;
+            imgData.data[cellIdx + 0] = intensity;
+            imgData.data[cellIdx + 1] = intensity * 0.8;
+            imgData.data[cellIdx + 2] = 255 - intensity;
+            imgData.data[cellIdx + 3] = 255;
         }
     }
-});
+    thumbCtx.putImageData(imgData, 0, 0);
 
-imprintBtn.addEventListener('click', storePattern);
-shakeBtn.addEventListener('click', shakeNetwork);
-clearLibraryBtn.addEventListener('click', clearLibrary);
-
-// Slider value displays
-strengthSlider.addEventListener('input', () => {
-    strengthValue.textContent = parseFloat(strengthSlider.value).toFixed(1);
-});
-
-lrSlider.addEventListener('input', () => {
-    lrValue.textContent = parseFloat(lrSlider.value).toFixed(2);
-});
-
-stepsSlider.addEventListener('input', () => {
-    stepsValue.textContent = stepsSlider.value;
-});
-
-// Initialize
-async function main() {
-    try {
-        await init();
-        init_panic_hook();
-
-        network = new Network(NETWORK_SIZE, MAX_HISTORY);
-        wasmMemory = network.memory();
-        console.log(`Network initialized with ${network.size()} oscillators`);
-
-        currentMode = 'idle';
-        updateButtons();
-        renderPatternLibrary();
-
-        renderNetwork();
-        updateStatus();
-
-        // Auto-select first pattern
-        document.querySelector('.pattern-btn[data-pattern="cross"]').click();
-
-    } catch (err) {
-        console.error('Failed to initialize:', err);
-        modeStatus.textContent = 'Error: ' + err.message;
-    }
+    wrapper.appendChild(thumbCanvas);
+    library.appendChild(wrapper);
 }
 
-main();
+function generatePattern(type) {
+    const pixels = new Float64Array(VIS_COLS * VIS_ROWS);
+
+    for (let y = 0; y < VIS_ROWS; y++) {
+        for (let x = 0; x < VIS_COLS; x++) {
+            let val = 0;
+            const idx = y * VIS_COLS + x;
+
+            switch (type) {
+                case 'checkerboard':
+                    val = ((x + y) % 2) * Math.PI; // 0 or PI
+                    break;
+                case 'diagonal':
+                    val = ((x + y) % 8 < 4) ? 0 : Math.PI;
+                    break;
+                case 'circle':
+                    const cx = VIS_COLS / 2;
+                    const cy = VIS_ROWS / 2;
+                    const r = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+                    val = (r < 10) ? Math.PI : 0;
+                    break;
+                case 'cross':
+                    const midX = VIS_COLS / 2;
+                    const midY = VIS_ROWS / 2;
+                    val = (Math.abs(x - midX) < 3 || Math.abs(y - midY) < 3) ? Math.PI : 0;
+                    break;
+                case 'letter-a':
+                    // Rough A shape
+                    val = 0;
+                    if (y > 5 && y < 25) {
+                        if (Math.abs(x - VIS_COLS / 2) < (y - 5) * 0.6 + 1 && Math.abs(x - VIS_COLS / 2) > (y - 5) * 0.6 - 1) val = Math.PI;
+                        if (y === 18 && Math.abs(x - VIS_COLS / 2) < 8) val = Math.PI;
+                    }
+                    break;
+            }
+            pixels[idx] = val;
+        }
+    }
+
+    currentTargetPattern = pixels;
+    drawPattern(targetCtx, pixels);
+
+    // Force phase setting for instant and accurate imprinting
+    for (let i = 0; i < pixels.length; i++) {
+        network.set_phase(i, pixels[i]);
+    }
+
+    // Ensure no competing drives
+    network.clear_drives();
+
+    // For this demo, we just set the phases directly.
+    shakeBtn.disabled = false;
+    updateStatus(`Selected: ${type}`);
+}
+
+function drawPattern(context, data) {
+    const imgData = context.createImageData(320, 320);
+    const scale = 320 / VIS_COLS; // 10
+
+    for (let y = 0; y < 320; y++) {
+        for (let x = 0; x < 320; x++) {
+            const py = Math.floor(y / scale);
+            const px = Math.floor(x / scale);
+            const idx = py * VIS_COLS + px;
+
+            // Phase to Color
+            // 0 -> Blue/Black, PI -> Yellow/White
+            // Continuous phase 0..2PI
+            let phase = data[idx];
+            if (phase < 0) phase += 2 * Math.PI;
+
+            // Simple grayscale or heatmap using Cosine for 0 vs PI contrast
+            const intensity = Math.cos(phase) * 127 + 128;
+
+            const cellIdx = (y * 320 + x) * 4;
+            imgData.data[cellIdx + 0] = intensity;     // R
+            imgData.data[cellIdx + 1] = intensity * 0.8; // G
+            imgData.data[cellIdx + 2] = 255 - intensity; // B
+            imgData.data[cellIdx + 3] = 255; // Alpha
+        }
+    }
+    context.putImageData(imgData, 0, 0);
+}
+
+function updateStatus(msg) {
+    modeStatus.innerText = msg;
+}
+
+function animate() {
+    if (!isRunning) return;
+
+    const dt = 0.1;
+    const lr = parseFloat(lrSlider.value);
+
+    // Step network
+    network.step(dt, lr);
+    step++;
+    stepCountDisplay.innerText = step;
+
+    // Get phases from WASM memory
+    const size = network.size();
+    const phasesPtr = network.phases_ptr();
+    const memory = network.memory();
+    const phases = new Float64Array(memory.buffer, phasesPtr, size);
+
+    // Draw Network State
+    drawPattern(ctx, phases);
+
+    // Turn off drives after a short while if we were driving
+    // (Optional logic if we used drive_node)
+
+    requestAnimationFrame(animate);
+}
+
+start().catch(console.error);

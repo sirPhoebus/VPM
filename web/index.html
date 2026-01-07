@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VPM Image Recall Demo</title>
+    <title>Multimodal Associative Brain</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,108 +14,68 @@
 <body>
     <div class="container">
         <header>
-            <h1>🧠 VPM Image Recall</h1>
-            <p class="subtitle">Associative Memory Demonstration</p>
+            <h1>🧠 Multimodal Associative Brain</h1>
+            <p>Visual • Semantic • Auditory</p>
         </header>
 
-        <div class="main-content">
-            <div class="canvas-section">
-                <div class="canvas-wrapper">
-                    <canvas id="networkCanvas" width="320" height="320"></canvas>
-                    <div class="canvas-label">Network State</div>
-                </div>
-                <div class="canvas-wrapper">
-                    <canvas id="targetCanvas" width="320" height="320"></canvas>
-                    <div class="canvas-label">Target Pattern</div>
+        <div class="cortex-container">
+            <!-- Visual Cortex -->
+            <div class="cortex-panel" id="visual-panel">
+                <h3>👁️ Visual Cortex</h3>
+                <canvas id="visualCanvas" width="300" height="300"></canvas>
+                <div class="panel-controls">
+                    <label class="btn file-btn">
+                        Upload Image
+                        <input type="file" id="imageUpload" accept="image/*">
+                    </label>
                 </div>
             </div>
 
-            <div class="controls-section">
-                <div class="control-group">
-                    <h3>📷 Select Pattern</h3>
-                    <div class="pattern-buttons">
-                        <button class="pattern-btn" data-pattern="checkerboard">Checkerboard</button>
-                        <button class="pattern-btn" data-pattern="diagonal">Diagonal</button>
-                        <button class="pattern-btn" data-pattern="circle">Circle</button>
-                        <button class="pattern-btn" data-pattern="cross">Cross</button>
-                        <button class="pattern-btn" data-pattern="letter-a">Letter A</button>
-                    </div>
-                    <div class="upload-section">
-                        <label for="imageUpload" class="upload-btn">
-                            📁 Upload Image
-                            <input type="file" id="imageUpload" accept="image/*">
-                        </label>
-                    </div>
+            <!-- Semantic Cortex -->
+            <div class="cortex-panel" id="semantic-panel">
+                <h3>💬 Semantic Cortex</h3>
+                <textarea id="semanticInput" placeholder="Type a thought here... (e.g., 'The King is dead')"></textarea>
+                <div class="panel-controls">
+                    <div class="status-indicator" id="textStatus">Ready</div>
                 </div>
+            </div>
 
-                <div class="control-group">
-                    <h3>⚡ Actions</h3>
-                    <div class="action-buttons">
-                        <button id="imprintBtn" class="action-btn primary" disabled>
-                            <span class="icon">💾</span>
-                            Store Pattern
-                        </button>
-                        <button id="shakeBtn" class="action-btn danger" disabled>
-                            <span class="icon">🌀</span>
-                            Chaos Shake
-                        </button>
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <h3>📚 Stored Patterns <span id="patternCount">(0)</span></h3>
-                    <div id="patternLibrary" class="pattern-library">
-                        <p class="empty-library">No patterns stored yet. Select a pattern and click "Store Pattern".</p>
-                    </div>
-                    <button id="clearLibraryBtn" class="action-btn small danger"
-                        style="margin-top: 0.75rem; display: none;">
-                        🗑️ Clear All
-                    </button>
-                </div>
-
-                <div class="control-group">
-                    <h3>🎚️ Settings</h3>
-                    <div class="slider-group">
-                        <label>Imprint Strength: <span id="strengthValue">5.0</span></label>
-                        <input type="range" id="strengthSlider" min="1" max="20" step="0.5" value="5">
-                    </div>
-                    <div class="slider-group">
-                        <label>Learning Rate: <span id="lrValue">0.05</span></label>
-                        <input type="range" id="lrSlider" min="0.01" max="0.2" step="0.01" value="0.05">
-                    </div>
-                    <div class="slider-group">
-                        <label>Imprint Steps: <span id="stepsValue">200</span></label>
-                        <input type="range" id="stepsSlider" min="50" max="500" step="10" value="200">
-                    </div>
-                </div>
-
-                <div class="status-panel">
-                    <div class="status-item">
-                        <span class="status-label">Mode:</span>
-                        <span id="modeStatus" class="status-value">Idle</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="status-label">Step:</span>
-                        <span id="stepCount" class="status-value">0</span>
-                    </div>
-                    <div class="status-item">
-                        <span class="status-label">Similarity:</span>
-                        <span id="similarity" class="status-value">--</span>
-                    </div>
+            <!-- Auditory Cortex -->
+            <div class="cortex-panel" id="auditory-panel">
+                <h3>👂 Auditory Cortex</h3>
+                <canvas id="audioCanvas" width="300" height="150"></canvas>
+                <div class="panel-controls">
+                    <button id="recordBtn" class="btn">🎤 Record Audio</button>
                 </div>
             </div>
         </div>
 
-        <div class="info-panel">
-            <h3>How it works</h3>
-            <p>
-                <strong>Imprint:</strong> The network learns the pattern by adjusting oscillator coupling weights.<br>
-                <strong>Shake:</strong> Randomizes all oscillator phases, creating chaos.<br>
-                <strong>Recall:</strong> The learned weights pull oscillators back toward the memorized pattern.
-            </p>
+        <div class="global-controls">
+            <div class="status-bar" id="modeStatus">Initializing...</div>
+            <div class="action-buttons">
+                <button id="storeBtn" class="btn primary-btn" disabled>🧠 Store Memory</button>
+                <button id="shakeBtn" class="btn danger-btn">🌪️ Chaos Shake</button>
+                <button id="clearMemBtn" class="btn warning-btn">🗑️ Clear All Memories</button>
+            </div>
+        </div>
+
+        <div class="library-container">
+            <h4>Stored Memories (<span id="patternCount">0</span>)</h4>
+            <div id="patternLibrary" class="library-grid">
+                <p class="empty-library">No memories stored yet.</p>
+            </div>
+        </div>
+
+        <div class="settings-panel">
+            <div class="setting-group">
+                <label>Imprint Strength <span id="strengthValue">5.0</span></label>
+                <input type="range" id="strengthSlider" min="0.1" max="10.0" step="0.1" value="5.0">
+            </div>
+            <div class="setting-group">
+                <label>Step: <span id="stepCount">0</span></label>
+            </div>
         </div>
     </div>
-
     <script type="module" src="app.js"></script>
 </body>
 

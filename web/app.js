@@ -29,6 +29,7 @@ const stepsValue = document.getElementById('stepsValue');
 let step = 0;
 let patternsStored = 0;
 let currentTargetPattern = null;
+let clampedState = null;
 
 // Configuration
 const SIZE = 1000;
@@ -36,14 +37,14 @@ const ROW_LEN = 50; // Visualizing as 50x20 grid? Or maybe just circle.
 // Let's assume a grid for visualization if possible, or just a ring/cloud.
 // The Rust code doesn't specify topology, it's just a reservoir. 
 // Visualizing 1000 nodes: 32x32 = 1024. 
-const VIS_COLS = 32;
-const VIS_ROWS = 32;
-// Adjust Sizing: 320x320 canvas => 10px per cell.
+const VIS_COLS = 64;
+const VIS_ROWS = 64;
+// Adjust Sizing: 320x320 canvas => 5px per cell.
 
 async function start() {
     await init();
 
-    // Initialize Network: 1000 nodes, history 5
+    // Initialize Network: 4096 nodes
     network = new Network(VIS_COLS * VIS_ROWS, 5);
 
     // Initial Pattern (Random)
@@ -71,6 +72,9 @@ function setupUI() {
         // Call the new ONE-SHOT imprint method
         network.imprint(strength);
 
+        // Release clamp so we can see if it worked (it should stay if memory is good)
+        clampedState = null;
+
         patternsStored++;
         patternCountDisplay.innerText = `(${patternsStored})`;
         updateStatus("Pattern Imprinted!");
@@ -80,11 +84,31 @@ function setupUI() {
         setTimeout(() => imprintBtn.innerText = "Store Pattern", 1000);
 
         addStoredPatternToLibrary(currentTargetPattern);
+
+        // Show clear button if hidden
+        clearLibraryBtn.style.display = 'block';
     });
 
     shakeBtn.addEventListener('click', () => {
+        clampedState = null;
         network.shake();
         updateStatus("Chaos Shake!");
+    });
+
+    // Clear Library
+    const clearLibraryBtn = document.getElementById('clearLibraryBtn');
+    clearLibraryBtn.addEventListener('click', () => {
+        clampedState = null;
+        network.clear_patterns();
+        document.getElementById('patternLibrary').innerHTML = '<p class="empty-library">Memory Cleared.</p>';
+        patternsStored = 0;
+        patternCountDisplay.innerText = '(0)';
+        updateStatus("Memory Cleared");
+        clearLibraryBtn.style.display = 'none';
+
+        // Flash redness
+        document.body.style.backgroundColor = '#300';
+        setTimeout(() => document.body.style.backgroundColor = '', 200);
     });
 
     // Sliders
@@ -96,13 +120,21 @@ function setupUI() {
     const imageUpload = document.getElementById('imageUpload');
     imageUpload.addEventListener('change', (e) => {
         const file = e.target.files[0];
+        // Reset value so the 'change' event fires even if the same file is selected again
+        e.target.value = '';
+
         if (!file) return;
+
+        updateStatus("Loading Image...");
+        currentTargetPattern = null; // Prevent using stale pattern
+        imprintBtn.disabled = true;
 
         const reader = new FileReader();
         reader.onload = (event) => {
             const img = new Image();
             img.onload = () => {
-                // Resize to grid size (32x32)
+                console.log("Image loaded for processing.");
+                // Resize to grid size (64x64)
                 const offCanvas = document.createElement('canvas');
                 offCanvas.width = VIS_COLS;
                 offCanvas.height = VIS_ROWS;
@@ -142,15 +174,17 @@ function setupUI() {
                 currentTargetPattern = pixels;
                 drawPattern(targetCtx, pixels);
 
-                // Set Network State
-                for (let i = 0; i < pixels.length; i++) {
-                    network.set_phase(i, pixels[i]);
+                // Lock the visual state so it doesn't get pulled by attractors
+                clampedState = pixels;
+
+                // Set initial state immediately
+                if (network.set_state_from_array) {
+                    network.set_state_from_array(pixels);
                 }
-                network.clear_drives();
 
                 imprintBtn.disabled = false;
                 shakeBtn.disabled = false;
-                updateStatus(`Uploaded Image Processed`);
+                updateStatus(`Uploaded Image Processed (Physics Paused)`);
             };
             img.src = event.target.result;
         };
@@ -176,11 +210,19 @@ function addStoredPatternToLibrary(patternData) {
 
     wrapper.onclick = () => {
         // Cue the network with this pattern
-        for (let i = 0; i < patternData.length; i++) {
-            network.set_phase(i, patternData[i]);
+        clampedState = patternData;
+
+        // Also set immediately
+        if (network.set_state_from_array) {
+            network.set_state_from_array(patternData);
+        } else {
+            for (let i = 0; i < patternData.length; i++) {
+                network.set_phase(i, patternData[i]);
+            }
         }
+
         network.clear_drives();
-        updateStatus("Cued Stored Pattern");
+        updateStatus("Cued Stored Pattern (Physics Paused)");
     };
 
     const thumbCanvas = document.createElement('canvas');
@@ -194,7 +236,7 @@ function addStoredPatternToLibrary(patternData) {
 
     // Re-use logic from drawPattern but scaled
     const imgData = thumbCtx.createImageData(64, 64);
-    const scale = 64 / VIS_COLS; // 2
+    const scale = 64 / VIS_COLS; // 1
 
     for (let y = 0; y < 64; y++) {
         for (let x = 0; x < 64; x++) {
@@ -239,19 +281,21 @@ function generatePattern(type) {
                     const cx = VIS_COLS / 2;
                     const cy = VIS_ROWS / 2;
                     const r = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
-                    val = (r < 10) ? Math.PI : 0;
+                    val = (r < 20) ? Math.PI : 0; // Scaled R 10->20
                     break;
                 case 'cross':
                     const midX = VIS_COLS / 2;
                     const midY = VIS_ROWS / 2;
-                    val = (Math.abs(x - midX) < 3 || Math.abs(y - midY) < 3) ? Math.PI : 0;
+                    // Scaled thickness 3->6
+                    val = (Math.abs(x - midX) < 6 || Math.abs(y - midY) < 6) ? Math.PI : 0;
                     break;
                 case 'letter-a':
-                    // Rough A shape
+                    // Scaled A shape (Roughly 2x coordinates)
                     val = 0;
-                    if (y > 5 && y < 25) {
-                        if (Math.abs(x - VIS_COLS / 2) < (y - 5) * 0.6 + 1 && Math.abs(x - VIS_COLS / 2) > (y - 5) * 0.6 - 1) val = Math.PI;
-                        if (y === 18 && Math.abs(x - VIS_COLS / 2) < 8) val = Math.PI;
+                    if (y > 10 && y < 50) {
+                        // Scaled slope logic
+                        if (Math.abs(x - VIS_COLS / 2) < (y - 10) * 0.6 + 2 && Math.abs(x - VIS_COLS / 2) > (y - 10) * 0.6 - 2) val = Math.PI;
+                        if (y === 36 && Math.abs(x - VIS_COLS / 2) < 16) val = Math.PI;
                     }
                     break;
             }
@@ -314,8 +358,18 @@ function animate() {
     const dt = 0.1;
     const lr = parseFloat(lrSlider.value);
 
-    // Step network
-    network.step(dt, lr);
+    if (clampedState) {
+        // Force the network to stay in this state (Physics Paused)
+        if (network.set_state_from_array) {
+            network.set_state_from_array(clampedState);
+        }
+        // No step() call
+        if (step % 60 === 0) updateStatus("Pattern Locked (Physics Paused)");
+    } else {
+        // Run Physics
+        network.step(dt, lr);
+    }
+
     step++;
     stepCountDisplay.innerText = step;
 
@@ -327,9 +381,6 @@ function animate() {
 
     // Draw Network State
     drawPattern(ctx, phases);
-
-    // Turn off drives after a short while if we were driving
-    // (Optional logic if we used drive_node)
 
     requestAnimationFrame(animate);
 }

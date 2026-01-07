@@ -1,71 +1,52 @@
 mod network;
-mod curriculum;
 
 use network::Network;
-use std::f64::consts::PI;
 
 fn main() {
-    let size = 500; // Larger size for better stats
-    let max_history = 5;
+    let size = 4096; // 64x64
+    let mut net = Network::new(size, 0);
     
-    println!("--- VPM Resonance Network Verification ---");
-
-    let mut net = Network::new(size, max_history);
-    println!("Network initialized with {} nodes.", net.size());
+    println!("--- Dense Associative Memory Verification (Dual Form) ---");
+    println!("Nodes: {}", size);
     
-    // 1. Create Pattern A
+    // 1. Create Pattern A (Random)
     net.shake();
     let pat_a: Vec<f64> = (0..size).map(|i| net.get_phase(i)).collect();
-    println!("Pattern A generated.");
-    
-    // 2. Imprint Pattern A
-    net.imprint(2.0); // Strength 2.0
+    net.imprint(1.0);
     println!("Pattern A imprinted.");
-    
-    // 3. Create Pattern B
+
+    // 2. Create Pattern B (Random)
     net.shake();
     let pat_b: Vec<f64> = (0..size).map(|i| net.get_phase(i)).collect();
-    println!("Pattern B generated.");
-    
-    // 4. Imprint Pattern B
-    net.imprint(2.0); // Strength 2.0
+    net.imprint(1.0);
     println!("Pattern B imprinted.");
-
-    // 5. Create Pattern C (to push it)
-    net.shake();
-    let pat_c: Vec<f64> = (0..size).map(|i| net.get_phase(i)).collect();
-    net.imprint(2.0);
-    println!("Pattern C imprinted.");
-
-    // TEST: Measure Energy
     
-    // State A
-    for i in 0..size { net.set_phase(i, pat_a[i]); }
-    let energy_a = net.calculate_energy();
-    println!("Energy at Pattern A: {:.4}", energy_a);
+    // 3. Recall Test
+    // Set state to A + Noise
+    println!("Cuing with Pattern A + Noise...");
+    for i in 0..size {
+        // 10% Noise
+        let noise = if i % 10 == 0 { 3.0 } else { 0.0 }; 
+        net.set_phase(i, pat_a[i] + noise);
+    }
     
-    // State B
-    for i in 0..size { net.set_phase(i, pat_b[i]); }
-    let energy_b = net.calculate_energy();
-    println!("Energy at Pattern B: {:.4}", energy_b);
-
-    // State C
-    for i in 0..size { net.set_phase(i, pat_c[i]); }
-    let energy_c = net.calculate_energy();
-    println!("Energy at Pattern C: {:.4}", energy_c);
+    // Run dynamics
+    for t in 0..50 {
+        net.step(0.1, 0.0);
+    }
     
-    // Random State
-    net.shake();
-    let energy_rand = net.calculate_energy();
-    println!("Energy at Random State: {:.4}", energy_rand);
+    // Measure overlap with A
+    let mut overlap_a = 0.0;
+    for i in 0..size {
+        overlap_a += (net.get_phase(i) - pat_a[i]).cos();
+    }
+    overlap_a /= size as f64;
     
-    if energy_a < -0.5 && energy_b < -0.5 && energy_c < -0.5 {
-         if energy_rand > -0.1 {
-             println!("SUCCESS: Patterns A, B, and C are deep energy minima compared to random noise.");
-         } else {
-             println!("WARNING: Random state energy is unexpectedly low ({:.4}). Check frustration.", energy_rand);
-         }
+    println!("Final Overlap with A: {:.4}", overlap_a);
+    
+    if overlap_a > 0.95 {
+        println!("SUCCESS: Perfect Recall achieved.");
     } else {
-        println!("FAILURE: One or more patterns are not stable (Energy > -0.5).");
+        println!("FAILURE: Recall failed (Overlap < 0.95).");
     }
 }

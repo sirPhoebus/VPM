@@ -1,5 +1,5 @@
 pub mod network;
-pub mod curriculum;
+
 
 use wasm_bindgen::prelude::*;
 
